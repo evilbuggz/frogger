@@ -26,9 +26,10 @@
       <form id="form">
         <div class="input-wrap"><input id="asset" name="asset" autocomplete="url" placeholder="e.g. 96376283814304" required></div>
         <button id="download-model" type="submit">Download RBXM</button>
-        <button id="convert-stl" class="secondary" type="submit">Convert to STL</button>
+        <button id="convert-stl" class="secondary" type="submit">Export STL (no textures)</button>
+        <button id="convert-glb" class="secondary" type="submit">Export GLB (with textures)</button>
       </form>
-      <p class="hint">Supports Roblox catalog, create/store, and asset links. STL conversion runs in your browser.</p>
+      <p class="hint">Supports Roblox catalog, create/store, and asset links. Conversion runs in your browser.</p>
       <div class="message" id="message" role="status" aria-live="polite"></div>
       <div class="divider"></div>
       <p class="note"><strong>STL is geometry only.</strong> It has no color or texture and does not store units; exported dimensions are in Roblox studs. Assets with inaccessible meshes or unsupported Roblox geometry cannot be converted completely.</p>
@@ -48,26 +49,37 @@
       const assetId=filename.replace(/\.(rbxm|rbxmx)$/i,'');return {blob,assetId,filename};
     }
     form.addEventListener('submit',async event=>{
-      event.preventDefault();const action=event.submitter?.id;message.className='message';message.textContent=action==='convert-stl'?'Downloading model and preparing mesh data…':'Retrieving model…';buttons.forEach(button=>button.disabled=true);
+      event.preventDefault();const action=event.submitter?.id;message.className='message';message.textContent=action==='convert-stl'||action==='convert-glb'?'Downloading model and preparing mesh data…':'Retrieving model…';buttons.forEach(button=>button.disabled=true);
       try{
         const model=await fetchModel();
-        if(action==='convert-stl'){
+        if(action==='convert-stl'||action==='convert-glb'){
           message.textContent='Reading model and fetching its referenced meshes…';
-          const [{parseRBXM,parseRBXMX,buildRoblox},{STLExporter},THREE]=await Promise.all([
+          const [{parseRBXM,parseRBXMX,buildRoblox},{fehlendeAssets,leereAssetFehler},{STLExporter,GLTFExporter},THREE]=await Promise.all([
             import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxm.js'),
-            import('three/addons/exporters/STLExporter.js'),
+            import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxassets.js'),
+            Promise.all([import('three/addons/exporters/STLExporter.js'),import('three/addons/exporters/GLTFExporter.js')]).then(([stl,gltf])=>({...stl,...gltf})),
             import('three')
           ]);
           const parsed=model.filename.toLowerCase().endsWith('.rbxmx')?parseRBXMX(await model.blob.text()):parseRBXM(await model.blob.arrayBuffer());
+          leereAssetFehler();
           const built=await buildRoblox(parsed,color=>new THREE.MeshStandardMaterial({color}));
           if(built.unions||built.platzhalter||built.offen.length){
             throw new Error(`Could not convert every part. ${built.offen.length?`Unavailable mesh IDs: ${built.offen.join(', ')}. `:''}${built.unions?'This model includes Roblox union geometry, which cannot be exported.':''}`);
           }
           if(!built.group.children.length)throw new Error('No supported 3D geometry was found in this model.');
+          const unavailable=fehlendeAssets();
+          if(action==='convert-glb'&&unavailable.length)throw new Error(`Texture or mesh assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}). No GLB was created so you don't get a file with missing textures.`);
           built.group.updateMatrixWorld(true);
-          const stl=new STLExporter().parse(built.group,{binary:true});
-          downloadBlob(new Blob([stl],{type:'model/stl'}),`${model.assetId}.stl`);
-          message.className='message success';message.textContent=`Downloaded ${model.assetId}.stl. STL has no units; this export uses Roblox studs.`;
+          if(action==='convert-stl'){
+            const stl=new STLExporter().parse(built.group,{binary:true});
+            downloadBlob(new Blob([stl],{type:'model/stl'}),`${model.assetId}.stl`);
+            message.className='message success';message.textContent=`Downloaded ${model.assetId}.stl. STL has no units; this export uses Roblox studs.`;
+          }else{
+            message.textContent='Packing model and textures into one GLB…';
+            const glb=await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
+            downloadBlob(new Blob([glb],{type:'model/gltf-binary'}),`${model.assetId}.glb`);
+            message.className='message success';message.textContent=`Downloaded ${model.assetId}.glb with retrieved textures embedded. Open it in Blender using File → Import → glTF 2.0.`;
+          }
         }else{
           downloadBlob(model.blob,model.filename);message.className='message success';message.textContent=`Downloaded ${model.filename}. Open it in Roblox Studio.`;
         }
