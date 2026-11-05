@@ -79,12 +79,16 @@ async function sendAsDownload(assetResponse, assetId, res) {
   }
   const prefix = Buffer.concat(prefixChunks, prefixLength);
   const file = identifyFile(prefix, assetResponse.headers.get('content-type'));
+  if (!file) {
+    await reader.cancel();
+    return res.status(415).json({ error: 'Roblox did not return a valid Studio model file for this asset. The asset may be a mesh or preview that cannot be opened as an .rbxm model.' });
+  }
   const filename = `${assetId}.${file.extension}`;
   res.statusCode = 200;
   res.setHeader('Content-Type', file.contentType);
   res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
-  const length = assetResponse.headers.get('content-length');
-  if (length && /^\d+$/.test(length)) res.setHeader('Content-Length', length);
+  // fetch() may transparently decompress the upstream response. Forwarding its
+  // Content-Length can then truncate the streamed file and corrupt RBXM data.
   res.setHeader('Cache-Control', 'private, no-store');
 
   for (const chunk of prefixChunks) {
@@ -107,19 +111,17 @@ async function sendAsDownload(assetResponse, assetId, res) {
 function identifyFile(prefix, contentType = '') {
   const type = contentType.toLowerCase();
   const sample = prefix.toString('utf8').replace(/^\uFEFF/, '').trimStart();
-  if (prefix.subarray(0, 8).toString('ascii') === '<roblox!') {
+  const binaryModelHeader = Buffer.from('3c726f626c6f782189ff0d0a1a0a', 'hex');
+  if (prefix.subarray(0, binaryModelHeader.length).equals(binaryModelHeader)) {
     return { extension: 'rbxm', contentType: 'application/octet-stream' };
   }
-  if (sample.startsWith('<?xml') || sample.startsWith('<roblox')) {
+  if (sample.startsWith('<?xml') || /^<roblox(?:>|\s)/.test(sample)) {
     return { extension: 'rbxmx', contentType: 'application/xml' };
   }
   if (type.includes('model/x-file-mesh-data') || /^version\s+\d/i.test(sample)) {
     return { extension: 'mesh', contentType: 'application/octet-stream' };
   }
-  if (type.includes('model/x-rbxm')) {
-    return { extension: 'rbxm', contentType: 'application/octet-stream' };
-  }
-  return { extension: 'rbxm', contentType: type || 'application/octet-stream' };
+  return null;
 }
 
 function isRobloxDeliveryUrl(value) {
