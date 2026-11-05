@@ -40,7 +40,7 @@
   </main>
   <script type="module">
     const form=document.querySelector('#form'),input=document.querySelector('#asset'),buttons=[...form.querySelectorAll('button')],message=document.querySelector('#message');
-    const params=new URLSearchParams(location.search),requestedFormat=params.get('format'),autoDownload=params.get('autodownload')==='1',threadlineTransfer=params.get('transfer')==='1';
+    const params=new URLSearchParams(location.search),requestedFormat=params.get('format'),autoDownload=params.get('autodownload')==='1',threadlineTransfer=params.get('transfer')==='1',threadlineToken=params.get('token')||'';
     const forcedFormat=['glb','png','zip'].includes(requestedFormat)?requestedFormat:null;
     if(params.has('asset'))input.value=params.get('asset');
     if(params.get('threadline')==='1'&&forcedFormat==='glb')buttons.filter(button=>button.dataset.format!=='glb').forEach(button=>button.hidden=true);
@@ -63,6 +63,11 @@
         canvas.getContext('2d').drawImage(bitmap,0,0);
         return await new Promise((resolve,reject)=>canvas.toBlob(file=>file?resolve(file):reject(new Error('Could not convert a retrieved texture to PNG.')),'image/png'));
       }finally{bitmap.close?.()}
+    }
+    async function blobToBase64(blob){
+      const bytes=new Uint8Array(await blob.arrayBuffer());let encoded='';
+      for(let offset=0;offset<bytes.length;offset+=0x6000)encoded+=btoa(String.fromCharCode(...bytes.subarray(offset,Math.min(offset+0x6000,bytes.length))));
+      return encoded;
     }
     async function fetchModel(){
       const response=await fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset:input.value.trim()})});
@@ -168,9 +173,16 @@
           if(format==='glb'){
             const filename=`${model.assetId}_threadline.glb`;
             if(threadlineTransfer){
+              if(params.get('transport')==='base64'){
+                const base64=await blobToBase64(new Blob([glb],{type:'model/gltf-binary'}));
+                const warning=unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ');
+                parent.postMessage({type:'threadline-glb-ready',assetId:model.assetId,filename,base64,warning,token:threadlineToken},'*');
+                message.className='message success';message.textContent='GLB is ready. Sending it to Threadline Downloads…';
+                return;
+              }
               const buffer=await new Blob([glb],{type:'model/gltf-binary'}).arrayBuffer();
               const warning=unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ');
-              parent.postMessage({type:'threadline-glb-ready',assetId:model.assetId,filename,buffer,warning},'*',[buffer]);
+              parent.postMessage({type:'threadline-glb-ready',assetId:model.assetId,filename,buffer,warning,token:threadlineToken},'*',[buffer]);
               message.className='message success';message.textContent='GLB is ready. Sending it to Threadline Downloads…';
               return;
             }
@@ -195,10 +207,10 @@
             ?`Downloaded ${model.assetId}_threadline.zip. Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. Retrieved texture PNGs are included; the GLB may be missing unavailable textures. Refresh the page before retrying so failed requests are retried.`
             :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs${textures.size?' and embedded textures':''}${pngTextures.length===1?' plus a separate PNG texture.':pngTextures.length?` plus ${pngTextures.length} separate PNG textures.`:textures.size?'.':'. Roblox returned no separate texture image.'}`;
         }
-      }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.';if(threadlineTransfer)parent.postMessage({type:'threadline-glb-error',error:error.message||'GLB export failed.'},'*')}
+      }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.';if(threadlineTransfer)parent.postMessage({type:'threadline-glb-error',error:error.message||'GLB export failed.',token:threadlineToken},'*')}
       finally{buttons.forEach(button=>button.disabled=false)}
     });
-    if(threadlineTransfer)parent.postMessage({type:'threadline-converter-ready'},'*');
+    if(threadlineTransfer)parent.postMessage({type:'threadline-converter-ready',token:threadlineToken},'*');
     if(autoDownload&&forcedFormat==='glb'&&/^\d{1,20}$/.test(input.value.trim())){
       queueMicrotask(()=>form.requestSubmit(buttons.find(button=>button.dataset.format==='glb')));
     }
