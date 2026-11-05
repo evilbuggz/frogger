@@ -86,7 +86,7 @@ async function getAssetResponse(assetId, apiKey) {
   const cloudStatus = response.status;
   // Try the public route too; private assets still require permission through
   // Open Cloud and will fail here with a useful status.
-  if ([400, 401, 403, 404, 410].includes(response.status)) {
+  if ([400, 401, 403, 404, 410, 415].includes(response.status)) {
     const publicResponse = await fetch(`${PUBLIC_ASSET_URL}${encodeURIComponent(assetId)}`, {
       headers: { Accept: '*/*' },
       redirect: 'manual'
