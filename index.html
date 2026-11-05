@@ -30,7 +30,7 @@
       <p class="hint">Supports Roblox catalog, create/store, and asset links. Conversion runs in your browser.</p>
       <div class="message" id="message" role="status" aria-live="polite"></div>
       <div class="divider"></div>
-      <p class="note"><strong>ZIP contents:</strong> <code>ASSETID_threadline.glb</code> and the retrieved texture as <code>ASSETID_threadline.png</code>. GLB stores the model, UV coordinates, materials, and textures in a Blender-importable file; the PNG is included separately too.</p>
+      <p class="note"><strong>ZIP contents:</strong> <code>ASSETID_threadline.glb</code> and any retrieved texture PNGs. GLB stores the model, UV coordinates, materials, and available textures in a Blender-importable file; PNG copies are included separately when available.</p>
     </section>
     <p class="footer">Downloads are requested from Roblox Asset Delivery.</p>
   </main>
@@ -67,7 +67,6 @@
           }
           if(!built.group.children.length)throw new Error('No supported 3D geometry was found in this model.');
           const unavailable=fehlendeAssets();
-          if(unavailable.length)throw new Error(`Some referenced mesh or texture assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}). No ZIP was created.`);
           built.group.updateMatrixWorld(true);
           const textures=new Map();
           built.group.traverse(object=>{
@@ -77,7 +76,6 @@
               if(image)textures.set(material.map.uuid,{image,width:image.naturalWidth||image.videoWidth||image.width,height:image.naturalHeight||image.videoHeight||image.height});
             }
           });
-          if(!textures.size)throw new Error('No texture image was found in this asset. Roblox may not provide a texture for it, or the texture may not be accessible.');
           const glb=await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
           const zip=new JSZip();
           zip.file(`${model.assetId}_threadline.glb`,glb);
@@ -93,7 +91,10 @@
           }
           const archive=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
           downloadBlob(archive,`${model.assetId}_threadline.zip`);
-          message.className='message success';message.textContent=`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':` plus ${textures.size} separate PNG textures.`}`;
+          message.className=unavailable.length?'message error':'message success';
+          message.textContent=unavailable.length
+            ?`Downloaded ${model.assetId}_threadline.zip. The mesh is included, but some referenced assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}); the GLB may be missing those textures.`
+            :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':textures.size?` plus ${textures.size} separate PNG textures.`:'; this asset has no separate texture image.'}`;
         }
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
       finally{buttons.forEach(button=>button.disabled=false)}
