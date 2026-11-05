@@ -37,6 +37,25 @@
   <script type="module">
     const form=document.querySelector('#form'),input=document.querySelector('#asset'),buttons=[...form.querySelectorAll('button')],message=document.querySelector('#message');
     function downloadBlob(blob,filename){const url=URL.createObjectURL(blob);const link=document.createElement('a');link.href=url;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),20000)}
+    async function imageMimeType(blob,contentType=''){
+      const advertised=String(contentType).split(';',1)[0].trim().toLowerCase();
+      if(/^image\/(png|jpeg|webp|gif|bmp)$/.test(advertised))return advertised;
+      const bytes=new Uint8Array(await blob.slice(0,12).arrayBuffer());
+      const starts=(signature)=>signature.every((value,index)=>bytes[index]===value);
+      if(starts([137,80,78,71,13,10,26,10]))return 'image/png';
+      if(starts([255,216,255]))return 'image/jpeg';
+      if(bytes.length>=12&&String.fromCharCode(...bytes.subarray(0,4))==='RIFF'&&String.fromCharCode(...bytes.subarray(8,12))==='WEBP')return 'image/webp';
+      if(/^GIF8[79]a$/.test(String.fromCharCode(...bytes.subarray(0,6))))return 'image/gif';
+      return null;
+    }
+    async function imageBlobToPng(blob){
+      const bitmap=await createImageBitmap(blob);
+      try{
+        const canvas=document.createElement('canvas');canvas.width=bitmap.width;canvas.height=bitmap.height;
+        canvas.getContext('2d').drawImage(bitmap,0,0);
+        return await new Promise((resolve,reject)=>canvas.toBlob(file=>file?resolve(file):reject(new Error('Could not convert a retrieved texture to PNG.')),'image/png'));
+      }finally{bitmap.close?.()}
+    }
     async function fetchModel(){
       const response=await fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset:input.value.trim()})});
       if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||'Unable to retrieve this asset.')}
@@ -60,7 +79,28 @@
             import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm')
           ]);
           const parsed=model.filename.toLowerCase().endsWith('.rbxmx')?parseRBXMX(await model.blob.text()):parseRBXM(await model.blob.arrayBuffer());
-          const built=await buildRoblox(parsed,color=>new THREE.MeshStandardMaterial({color}));
+          // Capture image responses from the asset proxy as they are fetched.
+          // This preserves the original texture even if the model parser cannot
+          // attach it to a material for GLB export.
+          const downloadedImages=new Map();
+          const originalFetch=window.fetch;
+          window.fetch=async(input,init)=>{
+            const response=await originalFetch.call(window,input,init);
+            try{
+              const requestUrl=new URL(typeof input==='string'?input:input.url,location.href);
+              const imageId=requestUrl.searchParams.get('id');
+              if(response.ok&&imageId&&(requestUrl.pathname.endsWith('/rbxasset')||requestUrl.pathname==='/rbxasset')){
+                const blob=await response.clone().blob();
+                const contentType=response.headers.get('Content-Type')||'';
+                const imageType=await imageMimeType(blob,contentType);
+                if(imageType)downloadedImages.set(imageId,{blob:blob.slice(0,blob.size,imageType),contentType:imageType});
+              }
+            }catch{/* Keep the parser's asset request working if capture is unavailable. */}
+            return response;
+          };
+          let built;
+          try{built=await buildRoblox(parsed,color=>new THREE.MeshStandardMaterial({color}));}
+          finally{window.fetch=originalFetch}
           if(built.unions||built.platzhalter||built.offen.length){
             throw new Error(`Could not convert every part. ${built.offen.length?`Unavailable mesh IDs: ${built.offen.join(', ')}. `:''}${built.unions?'This model includes Roblox union geometry, which cannot be exported.':''}`);
           }
@@ -79,21 +119,29 @@
           const zip=new JSZip();
           zip.file(`${model.assetId}_threadline.glb`,glb);
           let textureIndex=0;
-          for(const {image,width,height} of textures.values()){
-            if(!width||!height)throw new Error('A retrieved texture image could not be read.');
-            const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
-            const context=canvas.getContext('2d');context.drawImage(image,0,0,width,height);
-            const png=await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Could not encode a texture as PNG.')),'image/png'));
+          const pngTextures=[];
+          if(downloadedImages.size){
+            for(const [id,{blob}] of downloadedImages)pngTextures.push({id,png:await imageBlobToPng(blob)});
+          }else{
+            for(const {image,width,height} of textures.values()){
+              if(!width||!height)throw new Error('A retrieved texture image could not be read.');
+              const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+              canvas.getContext('2d').drawImage(image,0,0,width,height);
+              const png=await new Promise((resolve,reject)=>canvas.toBlob(file=>file?resolve(file):reject(new Error('Could not encode a texture as PNG.')),'image/png'));
+              pngTextures.push({id:null,png});
+            }
+          }
+          for(const {png} of pngTextures){
             textureIndex++;
-            const textureName=textures.size===1?`${model.assetId}_threadline.png`:`${model.assetId}_threadline_texture_${textureIndex}.png`;
+            const textureName=pngTextures.length===1?`${model.assetId}_threadline.png`:`${model.assetId}_threadline_texture_${textureIndex}.png`;
             zip.file(textureName,png);
           }
           const archive=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
           downloadBlob(archive,`${model.assetId}_threadline.zip`);
           message.className=unavailable.length?'message error':'message success';
           message.textContent=unavailable.length
-            ?`Downloaded ${model.assetId}_threadline.zip. The model is included, but Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. The GLB and PNGs may be missing those textures. Refresh the page before retrying so the failed asset request is retried.`
-            :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':textures.size?` plus ${textures.size} separate PNG textures.`:'; this asset has no separate texture image.'}`;
+            ?`Downloaded ${model.assetId}_threadline.zip. Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. Retrieved texture PNGs are included; the GLB may be missing unavailable textures. Refresh the page before retrying so failed requests are retried.`
+            :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs${textures.size?' and embedded textures':''}${pngTextures.length===1?' plus a separate PNG texture.':pngTextures.length?` plus ${pngTextures.length} separate PNG textures.`:textures.size?'.':'. Roblox returned no separate texture image.'}`;
         }
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
       finally{buttons.forEach(button=>button.disabled=false)}
