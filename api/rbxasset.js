@@ -1,36 +1,36 @@
 const API_URL = 'https://apis.roblox.com/asset-delivery-api/v1/assetId/';
 
 module.exports = async (req, res) => {
-  if (req.method !== 'GET') return res.status(405).json({ error: 'Use GET for this request.' });
+  if (req.method !== 'GET') return sendError(res, 405, 'Use GET for this request.');
   const assetId = String(req.query?.id || '').trim();
-  if (!/^\d{1,20}$/.test(assetId)) return res.status(400).json({ error: 'A numeric Roblox mesh or texture asset ID is required.' });
+  if (!/^\d{1,20}$/.test(assetId)) return sendError(res, 400, 'A numeric Roblox mesh or texture asset ID is required.');
   const apiKey = process.env.ROBLOX_API_KEY;
-  if (!apiKey) return res.status(503).json({ error: 'Roblox asset access is not configured.' });
+  if (!apiKey) return sendError(res, 503, 'Roblox asset access is not configured.');
 
   try {
     let response = await fetch(`${API_URL}${assetId}`, {
       headers: { 'x-api-key': apiKey, Accept: '*/*' },
       redirect: 'manual'
     });
-    if (response.status === 401 || response.status === 403) return res.status(403).json({ error: 'Roblox denied access to this mesh or texture.' });
-    if (response.status === 404 || response.status === 400) return res.status(404).json({ error: 'Roblox could not find an accessible mesh or texture with that ID.' });
+    if (response.status === 401 || response.status === 403) return sendError(res, 403, 'Roblox denied access to this mesh or texture. Check the API key permissions and whether its owner can access this asset.');
+    if (response.status === 404 || response.status === 400) return sendError(res, 404, 'Roblox could not find an accessible mesh or texture with that ID.');
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
-      if (!isRobloxDeliveryUrl(location)) return res.status(502).json({ error: 'Roblox returned an unexpected asset location.' });
+      if (!isRobloxDeliveryUrl(location)) return sendError(res, 502, 'Roblox returned an unexpected asset location.');
       response = await fetch(location);
     }
-    if (!response.ok) return res.status(502).json({ error: `Roblox returned status ${response.status} for this asset.` });
+    if (!response.ok) return sendError(res, 502, `Roblox returned status ${response.status} for this asset.`);
 
     if ((response.headers.get('content-type') || '').includes('json')) {
       const payload = await response.json();
       const location = payload?.locations?.[0]?.location || payload?.location;
-      if (!isRobloxDeliveryUrl(location)) return res.status(502).json({ error: 'Roblox did not return an asset download location.' });
+      if (!isRobloxDeliveryUrl(location)) return sendError(res, 502, 'Roblox did not return an asset download location.');
       response = await fetch(location);
-      if (!response.ok) return res.status(502).json({ error: `Roblox's asset server returned status ${response.status}.` });
+      if (!response.ok) return sendError(res, 502, `Roblox's asset server returned status ${response.status}.`);
     }
 
-    if (!response.body) return res.status(502).json({ error: 'Roblox returned an empty asset.' });
+    if (!response.body) return sendError(res, 502, 'Roblox returned an empty asset.');
     const reader = response.body.getReader();
     const chunks = [];
     let length = 0;
@@ -45,7 +45,7 @@ module.exports = async (req, res) => {
     const contentType = identifyContentType(prefix, response.headers.get('content-type'));
     if (!contentType) {
       await reader.cancel();
-      return res.status(415).json({ error: 'Roblox returned an unsupported asset format for this mesh or texture reference.' });
+      return sendError(res, 415, 'Roblox returned an unsupported asset format for this mesh or texture reference.');
     }
     res.statusCode = 200;
     res.setHeader('Content-Type', contentType);
@@ -63,10 +63,14 @@ module.exports = async (req, res) => {
     }
   } catch (error) {
     console.error('Roblox asset request failed:', error);
-    if (!res.headersSent) return res.status(502).json({ error: 'Could not retrieve a referenced Roblox mesh or texture.' });
+    if (!res.headersSent) return sendError(res, 502, 'Could not retrieve a referenced Roblox mesh or texture.');
     res.destroy(error);
   }
 };
+
+function sendError(res, status, message) {
+  return res.status(status).json({ error: message, fehler: message });
+}
 
 function identifyContentType(prefix, advertisedType = '') {
   const type = String(advertisedType).split(';', 1)[0].trim().toLowerCase();
