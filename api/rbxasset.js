@@ -6,8 +6,10 @@ module.exports = async (req, res) => {
   res.setHeader('X-Threadline-Asset-Route', 'image-ref-v1');
   const assetId = String(req.query?.id || '').trim();
   if (!/^\d{1,20}$/.test(assetId)) return sendError(res, 400, 'A numeric Roblox mesh or texture asset ID is required.');
-  const apiKey = process.env.ROBLOX_API_KEY;
-  if (!apiKey) return sendError(res, 503, 'Roblox asset access is not configured.');
+  // Keep texture delivery credentials separate from the model download route.
+  // MiniBlend uses this endpoint for both mesh and image references.
+  const apiKey = process.env.ROBLOX_TEXTURE_API_KEY || process.env.ROBLOX_API_KEY;
+  if (!apiKey) return sendError(res, 503, 'Texture delivery is not configured. Add ROBLOX_TEXTURE_API_KEY in Vercel project settings.');
 
   try {
     let currentId = assetId;
