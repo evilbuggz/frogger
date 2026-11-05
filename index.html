@@ -93,7 +93,7 @@
           downloadBlob(archive,`${model.assetId}_threadline.zip`);
           message.className=unavailable.length?'message error':'message success';
           message.textContent=unavailable.length
-            ?`Downloaded ${model.assetId}_threadline.zip. The mesh is included, but some referenced assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}); the GLB may be missing those textures.`
+            ?`Downloaded ${model.assetId}_threadline.zip. The model is included, but Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. The GLB and PNGs may be missing those textures.`
             :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':textures.size?` plus ${textures.size} separate PNG textures.`:'; this asset has no separate texture image.'}`;
         }
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
