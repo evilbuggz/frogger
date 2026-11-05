@@ -3,6 +3,7 @@ const PUBLIC_ASSET_URL = 'https://assetdelivery.roblox.com/v1/asset/?id=';
 
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return sendError(res, 405, 'Use GET for this request.');
+  res.setHeader('X-Threadline-Asset-Route', 'image-ref-v1');
   const assetId = String(req.query?.id || '').trim();
   if (!/^\d{1,20}$/.test(assetId)) return sendError(res, 400, 'A numeric Roblox mesh or texture asset ID is required.');
   const apiKey = process.env.ROBLOX_API_KEY;
