@@ -12,7 +12,7 @@
     :root{color-scheme:dark;--bg:#101114;--panel:#191a20;--line:#30313a;--muted:#a5a7b2;--text:#f5f5f7;--accent:#b8f34a;--red:#ff7a7a}
     *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0,#22252c 0,transparent 50%),var(--bg);color:var(--text);font:16px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center;padding:28px}
     main{width:min(100%,650px)}.brand{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:750;margin-bottom:24px}.card{padding:clamp(24px,6vw,48px);border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 94%,transparent);border-radius:24px;box-shadow:0 24px 80px #0005}
-    h1{font-size:clamp(32px,6vw,46px);letter-spacing:-.045em;line-height:1.06;margin:0 0 14px}p{color:var(--muted);margin:0}.intro{max-width:490px;margin-bottom:30px}.label{display:block;font-weight:650;font-size:14px;margin-bottom:9px}form{display:grid;grid-template-columns:1fr 1fr;gap:10px}.input-wrap{grid-column:1/-1;min-width:0}input{width:100%;height:54px;background:#101115;border:1px solid #3a3b44;border-radius:12px;padding:0 16px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #b8f34a24}button{height:54px;padding:0 16px;border:0;border-radius:12px;background:var(--accent);color:#17190e;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}button.secondary{background:#292b33;color:var(--text);border:1px solid #3a3b44}button:hover{filter:brightness(1.06)}button:disabled{opacity:.55;cursor:wait}.hint{font-size:13px;margin-top:10px}.message{min-height:24px;margin-top:16px;font-size:14px;color:var(--muted)}.message.error{color:var(--red)}.message.success{color:var(--accent)}.divider{height:1px;background:var(--line);margin:27px 0 21px}.note{font-size:13px}.note strong{color:#dedfe4;font-weight:600}.footer{font-size:12px;text-align:center;margin-top:18px;color:#777985}
+    h1{font-size:clamp(32px,6vw,46px);letter-spacing:-.045em;line-height:1.06;margin:0 0 14px}p{color:var(--muted);margin:0}.intro{max-width:490px;margin-bottom:30px}.label{display:block;font-weight:650;font-size:14px;margin-bottom:9px}form{display:grid;grid-template-columns:1fr;gap:10px}.input-wrap{min-width:0}input{width:100%;height:54px;background:#101115;border:1px solid #3a3b44;border-radius:12px;padding:0 16px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #b8f34a24}button{height:54px;padding:0 16px;border:0;border-radius:12px;background:var(--accent);color:#17190e;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{filter:brightness(1.06)}button:disabled{opacity:.55;cursor:wait}.hint{font-size:13px;margin-top:10px}.message{min-height:24px;margin-top:16px;font-size:14px;color:var(--muted)}.message.error{color:var(--red)}.message.success{color:var(--accent)}.divider{height:1px;background:var(--line);margin:27px 0 21px}.note{font-size:13px}.note strong{color:#dedfe4;font-weight:600}.footer{font-size:12px;text-align:center;margin-top:18px;color:#777985}
     @media(max-width:520px){form{grid-template-columns:1fr}button{width:100%}}
   </style>
 </head>
@@ -25,14 +25,12 @@
       <label class="label" for="asset">Asset ID or Roblox URL</label>
       <form id="form">
         <div class="input-wrap"><input id="asset" name="asset" autocomplete="url" placeholder="e.g. 96376283814304" required></div>
-        <button id="download-model" type="submit">Download RBXM</button>
-        <button id="convert-stl" class="secondary" type="submit">Export STL (no textures)</button>
-        <button id="convert-glb" class="secondary" type="submit">Export GLB (with textures)</button>
+        <button id="convert-model" type="submit">Download Blender model + texture ZIP</button>
       </form>
       <p class="hint">Supports Roblox catalog, create/store, and asset links. Conversion runs in your browser.</p>
       <div class="message" id="message" role="status" aria-live="polite"></div>
       <div class="divider"></div>
-      <p class="note"><strong>STL is geometry only.</strong> It has no color or texture and does not store units; exported dimensions are in Roblox studs. Assets with inaccessible meshes or unsupported Roblox geometry cannot be converted completely.</p>
+      <p class="note"><strong>ZIP contents:</strong> <code>ASSETID_threadline.glb</code> and the retrieved texture as <code>ASSETID_threadline.png</code>. GLB stores the model, UV coordinates, materials, and textures in a Blender-importable file; the PNG is included separately too.</p>
     </section>
     <p class="footer">Downloads are requested from Roblox Asset Delivery.</p>
   </main>
@@ -49,16 +47,17 @@
       const assetId=filename.replace(/\.(rbxm|rbxmx)$/i,'');return {blob,assetId,filename};
     }
     form.addEventListener('submit',async event=>{
-      event.preventDefault();const action=event.submitter?.id;message.className='message';message.textContent=action==='convert-stl'||action==='convert-glb'?'Downloading model and preparing mesh data…':'Retrieving model…';buttons.forEach(button=>button.disabled=true);
+      event.preventDefault();message.className='message';message.textContent='Downloading model and retrieving its mesh and texture…';buttons.forEach(button=>button.disabled=true);
       try{
         const model=await fetchModel();
-        if(action==='convert-stl'||action==='convert-glb'){
-          message.textContent='Reading model and fetching its referenced meshes…';
-          const [{parseRBXM,parseRBXMX,buildRoblox},{fehlendeAssets,leereAssetFehler},{STLExporter,GLTFExporter},THREE]=await Promise.all([
+        {
+          message.textContent='Reading model and fetching its referenced meshes and textures…';
+          const [{parseRBXM,parseRBXMX,buildRoblox},{fehlendeAssets,leereAssetFehler},{GLTFExporter},THREE,{default:JSZip}]=await Promise.all([
             import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxm.js'),
             import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxassets.js'),
-            Promise.all([import('three/addons/exporters/STLExporter.js'),import('three/addons/exporters/GLTFExporter.js')]).then(([stl,gltf])=>({...stl,...gltf})),
-            import('three')
+            import('three/addons/exporters/GLTFExporter.js'),
+            import('three'),
+            import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm')
           ]);
           const parsed=model.filename.toLowerCase().endsWith('.rbxmx')?parseRBXMX(await model.blob.text()):parseRBXM(await model.blob.arrayBuffer());
           leereAssetFehler();
@@ -68,20 +67,33 @@
           }
           if(!built.group.children.length)throw new Error('No supported 3D geometry was found in this model.');
           const unavailable=fehlendeAssets();
-          if(action==='convert-glb'&&unavailable.length)throw new Error(`Texture or mesh assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}). No GLB was created so you don't get a file with missing textures.`);
+          if(unavailable.length)throw new Error(`Some referenced mesh or texture assets could not be retrieved (${unavailable.map(item=>item.id).join(', ')}). No ZIP was created.`);
           built.group.updateMatrixWorld(true);
-          if(action==='convert-stl'){
-            const stl=new STLExporter().parse(built.group,{binary:true});
-            downloadBlob(new Blob([stl],{type:'model/stl'}),`${model.assetId}.stl`);
-            message.className='message success';message.textContent=`Downloaded ${model.assetId}.stl. STL has no units; this export uses Roblox studs.`;
-          }else{
-            message.textContent='Packing model and textures into one GLB…';
-            const glb=await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
-            downloadBlob(new Blob([glb],{type:'model/gltf-binary'}),`${model.assetId}.glb`);
-            message.className='message success';message.textContent=`Downloaded ${model.assetId}.glb with retrieved textures embedded. Open it in Blender using File → Import → glTF 2.0.`;
+          const textures=new Map();
+          built.group.traverse(object=>{
+            if(!object.isMesh)return;
+            for(const material of (Array.isArray(object.material)?object.material:[object.material])){
+              const image=material?.map?.image;
+              if(image)textures.set(material.map.uuid,{image,width:image.naturalWidth||image.videoWidth||image.width,height:image.naturalHeight||image.videoHeight||image.height});
+            }
+          });
+          if(!textures.size)throw new Error('No texture image was found in this asset. Roblox may not provide a texture for it, or the texture may not be accessible.');
+          const glb=await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
+          const zip=new JSZip();
+          zip.file(`${model.assetId}_threadline.glb`,glb);
+          let textureIndex=0;
+          for(const {image,width,height} of textures.values()){
+            if(!width||!height)throw new Error('A retrieved texture image could not be read.');
+            const canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+            const context=canvas.getContext('2d');context.drawImage(image,0,0,width,height);
+            const png=await new Promise((resolve,reject)=>canvas.toBlob(blob=>blob?resolve(blob):reject(new Error('Could not encode a texture as PNG.')),'image/png'));
+            textureIndex++;
+            const textureName=textures.size===1?`${model.assetId}_threadline.png`:`${model.assetId}_threadline_texture_${textureIndex}.png`;
+            zip.file(textureName,png);
           }
-        }else{
-          downloadBlob(model.blob,model.filename);message.className='message success';message.textContent=`Downloaded ${model.filename}. Open it in Roblox Studio.`;
+          const archive=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
+          downloadBlob(archive,`${model.assetId}_threadline.zip`);
+          message.className='message success';message.textContent=`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':` plus ${textures.size} separate PNG textures.`}`;
         }
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
       finally{buttons.forEach(button=>button.disabled=false)}
