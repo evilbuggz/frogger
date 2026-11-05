@@ -3,7 +3,7 @@ const PUBLIC_ASSET_URL = 'https://assetdelivery.roblox.com/v1/asset/?id=';
 
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return sendError(res, 405, 'Use GET for this request.');
-  res.setHeader('X-Threadline-Asset-Route', 'image-ref-v1');
+  res.setHeader('X-Threadline-Asset-Route', 'raw-asset-v2');
   const assetId = String(req.query?.id || '').trim();
   if (!/^\d{1,20}$/.test(assetId)) return sendError(res, 400, 'A numeric Roblox mesh or texture asset ID is required.');
   // Keep texture delivery credentials separate from the model download route.
@@ -30,20 +30,7 @@ module.exports = async (req, res) => {
       const advertisedType = response.headers.get('content-type') || '';
       const contentType = identifyContentType(prefix, advertisedType);
       if (contentType) {
-        res.statusCode = 200;
-        res.setHeader('Content-Type', contentType);
-        res.setHeader('Cache-Control', 'private, max-age=300');
-        for (const chunk of chunks) if (!res.write(chunk)) await new Promise(resolve => res.once('drain', resolve));
-        try {
-          while (true) {
-            const { value, done } = await reader.read();
-            if (done) break;
-            if (!res.write(Buffer.from(value))) await new Promise(resolve => res.once('drain', resolve));
-          }
-          return res.end();
-        } finally {
-          reader.releaseLock();
-        }
+        return streamAsset(res, reader, chunks, contentType);
       }
 
       if (isXmlAsset(prefix, advertisedType)) {
@@ -55,20 +42,25 @@ module.exports = async (req, res) => {
           xmlChunks.push(chunk);
           length += chunk.length;
         }
-        await reader.cancel().catch(() => {});
-        reader.releaseLock();
-        if (length > 2 * 1024 * 1024) return sendError(res, 413, 'Roblox returned an unexpectedly large XML asset reference.');
+        if (length > 2 * 1024 * 1024) return streamAsset(res, reader, xmlChunks, advertisedType || 'application/xml');
         const imageId = extractTextureImageId(Buffer.concat(xmlChunks, length).toString('utf8'));
         if (imageId && imageId !== currentId) {
+          await reader.cancel().catch(() => {});
+          reader.releaseLock();
           currentId = imageId;
           continue;
         }
-        return sendError(res, 415, `Roblox returned an XML asset for ${currentId}, but it did not contain a usable Texture image ID.`);
+        await reader.cancel().catch(() => {});
+        reader.releaseLock();
+        res.statusCode = 200;
+        res.setHeader('Content-Type', safeContentType(advertisedType) || 'application/xml');
+        res.setHeader('Cache-Control', 'private, max-age=300');
+        return res.end(Buffer.concat(xmlChunks, length));
       }
 
-      await reader.cancel().catch(() => {});
-      reader.releaseLock();
-      return sendError(res, 415, `Roblox returned an unsupported asset format for ${currentId}.`);
+      // Preserve Roblox's bytes even when the format is unknown. The browser
+      // can inspect the signature and decide whether it is an image or mesh.
+      return streamAsset(res, reader, chunks, safeContentType(advertisedType));
     }
     return sendError(res, 502, `Roblox's texture reference for ${assetId} contained too many nested assets.`);
   } catch (error) {
@@ -84,31 +76,41 @@ async function getAssetResponse(assetId, apiKey) {
     redirect: 'manual'
   });
   const cloudStatus = response.status;
-  // Try the public route too; private assets still require permission through
-  // Open Cloud and will fail here with a useful status.
-  if ([400, 401, 403, 404, 410, 415].includes(response.status)) {
-    const publicResponse = await fetch(`${PUBLIC_ASSET_URL}${encodeURIComponent(assetId)}`, {
-      headers: { Accept: '*/*' },
-      redirect: 'manual'
-    });
-    if (publicResponse.ok || (publicResponse.status >= 300 && publicResponse.status < 400)) {
-      response = publicResponse;
-    } else {
-      throw new Error(`Roblox could not deliver asset ${assetId}. Open Cloud returned ${cloudStatus}; public Asset Delivery returned ${publicResponse.status}.`);
-    }
-  }
+  if ([400, 401, 403, 404, 410, 415].includes(response.status)) return getPublicAssetResponse(assetId, cloudStatus);
   if (response.status >= 300 && response.status < 400) {
     const location = response.headers.get('location');
     if (!isRobloxDeliveryUrl(location)) throw new Error('Roblox returned an unexpected asset location.');
     response = await fetch(location);
   }
-  if (!response.ok) throw new Error(`Roblox returned status ${response.status} for asset ${assetId}.`);
+  if (!response.ok) return getPublicAssetResponse(assetId, cloudStatus);
+  if ((response.headers.get('content-type') || '').includes('json')) {
+    const payload = await response.json();
+    const location = payload?.locations?.[0]?.location || payload?.location;
+    if (!isRobloxDeliveryUrl(location)) return getPublicAssetResponse(assetId, cloudStatus);
+    response = await fetch(location);
+    if (!response.ok) return getPublicAssetResponse(assetId, cloudStatus);
+  }
+  return response;
+}
+
+async function getPublicAssetResponse(assetId, cloudStatus) {
+  let response = await fetch(`${PUBLIC_ASSET_URL}${encodeURIComponent(assetId)}`, {
+    headers: { Accept: '*/*' },
+    redirect: 'manual'
+  });
+  const publicStatus = response.status;
+  if (response.status >= 300 && response.status < 400) {
+    const location = response.headers.get('location');
+    if (!isRobloxDeliveryUrl(location)) throw new Error('Roblox returned an unexpected public asset location.');
+    response = await fetch(location);
+  }
+  if (!response.ok) throw new Error(`Roblox could not deliver asset ${assetId}. Open Cloud returned ${cloudStatus}; public Asset Delivery returned ${publicStatus}.`);
   if ((response.headers.get('content-type') || '').includes('json')) {
     const payload = await response.json();
     const location = payload?.locations?.[0]?.location || payload?.location;
     if (!isRobloxDeliveryUrl(location)) throw new Error('Roblox did not return an asset download location.');
     response = await fetch(location);
-    if (!response.ok) throw new Error(`Roblox's asset server returned status ${response.status} for asset ${assetId}.`);
+    if (!response.ok) throw new Error(`Roblox's public asset server returned status ${response.status} for asset ${assetId}.`);
   }
   return response;
 }
@@ -134,6 +136,28 @@ function extractTextureImageId(xml) {
 
 function sendError(res, status, message) {
   return res.status(status).json({ error: message, fehler: message });
+}
+
+async function streamAsset(res, reader, chunks, contentType) {
+  res.statusCode = 200;
+  res.setHeader('Content-Type', contentType || 'application/octet-stream');
+  res.setHeader('Cache-Control', 'private, max-age=300');
+  try {
+    for (const chunk of chunks) if (!res.write(chunk)) await new Promise(resolve => res.once('drain', resolve));
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!res.write(Buffer.from(value))) await new Promise(resolve => res.once('drain', resolve));
+    }
+    return res.end();
+  } finally {
+    reader.releaseLock();
+  }
+}
+
+function safeContentType(value) {
+  const type = String(value || '').split(';', 1)[0].trim();
+  return /^[\w.+-]+\/[\w.+-]+$/.test(type) ? type : 'application/octet-stream';
 }
 
 function identifyContentType(prefix, advertisedType = '') {
