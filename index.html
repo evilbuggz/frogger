@@ -52,7 +52,7 @@
         const model=await fetchModel();
         {
           message.textContent='Reading model and fetching its referenced meshes and textures…';
-          const [{parseRBXM,parseRBXMX,buildRoblox},{fehlendeAssets,leereAssetFehler},{GLTFExporter},THREE,{default:JSZip}]=await Promise.all([
+          const [{parseRBXM,parseRBXMX,buildRoblox},{fehlendeAssets},{GLTFExporter},THREE,{default:JSZip}]=await Promise.all([
             import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxm.js'),
             import('https://cdn.jsdelivr.net/gh/Vaelixx/miniblend@main/js/rbxassets.js'),
             import('three/addons/exporters/GLTFExporter.js'),
@@ -60,7 +60,6 @@
             import('https://cdn.jsdelivr.net/npm/jszip@3.10.1/+esm')
           ]);
           const parsed=model.filename.toLowerCase().endsWith('.rbxmx')?parseRBXMX(await model.blob.text()):parseRBXM(await model.blob.arrayBuffer());
-          leereAssetFehler();
           const built=await buildRoblox(parsed,color=>new THREE.MeshStandardMaterial({color}));
           if(built.unions||built.platzhalter||built.offen.length){
             throw new Error(`Could not convert every part. ${built.offen.length?`Unavailable mesh IDs: ${built.offen.join(', ')}. `:''}${built.unions?'This model includes Roblox union geometry, which cannot be exported.':''}`);
@@ -93,7 +92,7 @@
           downloadBlob(archive,`${model.assetId}_threadline.zip`);
           message.className=unavailable.length?'message error':'message success';
           message.textContent=unavailable.length
-            ?`Downloaded ${model.assetId}_threadline.zip. The model is included, but Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. The GLB and PNGs may be missing those textures.`
+            ?`Downloaded ${model.assetId}_threadline.zip. The model is included, but Roblox did not deliver these referenced assets: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}. The GLB and PNGs may be missing those textures. Refresh the page before retrying so the failed asset request is retried.`
             :`Downloaded ${model.assetId}_threadline.zip with a Blender-ready GLB containing UVs and embedded textures${textures.size===1?' plus a separate PNG texture.':textures.size?` plus ${textures.size} separate PNG textures.`:'; this asset has no separate texture image.'}`;
         }
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
