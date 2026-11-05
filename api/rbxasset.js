@@ -1,4 +1,5 @@
 const API_URL = 'https://apis.roblox.com/asset-delivery-api/v1/assetId/';
+const PUBLIC_ASSET_URL = 'https://assetdelivery.roblox.com/v1/asset/?id=';
 
 module.exports = async (req, res) => {
   if (req.method !== 'GET') return sendError(res, 405, 'Use GET for this request.');
@@ -12,8 +13,22 @@ module.exports = async (req, res) => {
       headers: { 'x-api-key': apiKey, Accept: '*/*' },
       redirect: 'manual'
     });
-    if (response.status === 401 || response.status === 403) return sendError(res, 403, 'Roblox denied access to this mesh or texture. Check the API key permissions and whether its owner can access this asset.');
-    if (response.status === 404 || response.status === 400) return sendError(res, 404, 'Roblox could not find an accessible mesh or texture with that ID.');
+    const cloudStatus = response.status;
+    // Roblox's Open Cloud endpoint does not expose every public legacy asset to
+    // every API key. Try the public Asset Delivery route for those IDs before
+    // reporting a denial; this is especially useful for image/texture assets.
+    if ([400, 401, 403, 404, 410].includes(response.status)) {
+      const publicResponse = await fetch(`${PUBLIC_ASSET_URL}${encodeURIComponent(assetId)}`, {
+        headers: { Accept: '*/*' },
+        redirect: 'manual'
+      });
+      if (publicResponse.ok || (publicResponse.status >= 300 && publicResponse.status < 400)) {
+        response = publicResponse;
+      } else {
+        return sendError(res, cloudStatus === 401 || cloudStatus === 403 ? 403 : 404,
+          `Roblox could not deliver this asset. Open Cloud returned ${cloudStatus}; public Asset Delivery returned ${publicResponse.status}. The texture may be private, moderated, or unavailable.`);
+      }
+    }
 
     if (response.status >= 300 && response.status < 400) {
       const location = response.headers.get('location');
