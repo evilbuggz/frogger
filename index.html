@@ -140,9 +140,9 @@
           if(format==='png'){
             if(!pngTextures.length){
               const detail=unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ');
-              const oldRoute=imageRouteRequested&&imageRouteMarker!=='image-ref-v1';
+              const oldRoute=imageRouteRequested&&imageRouteMarker!=='raw-asset-v2';
               throw new Error(oldRoute
-                ?`No PNG was returned. The live texture route is outdated (missing X-Threadline-Asset-Route: image-ref-v1). Deploy the current vercelWebpage directory. ${detail}`
+                ?`No PNG was returned. The live texture route is outdated (missing X-Threadline-Asset-Route: raw-asset-v2). Deploy the current vercelWebpage directory. ${detail}`
                 :`No PNG image bytes were returned for this model.${detail?` Roblox reported: ${detail}.`:''}`);
             }
             downloadBlob(pngTextures[0].png,`${model.assetId}_threadline.png`);
