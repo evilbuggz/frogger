@@ -37,9 +37,11 @@
       event.preventDefault();message.className='message';message.textContent='Checking asset…';button.disabled=true;
       try{
         const response=await fetch('/api/download',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({asset:input.value.trim()})});
-        const data=await response.json();
-        if(!response.ok)throw new Error(data.error||'Unable to retrieve this asset.');
-        message.className='message success';message.textContent='Asset found. Starting download…';window.location.assign(data.url);
+        if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.error||'Unable to retrieve this asset.')}
+        const disposition=response.headers.get('Content-Disposition')||'';
+        const filename=disposition.match(/filename="?([^";]+)"?/i)?.[1]||'roblox-asset.rbxm';
+        const blob=await response.blob();const objectUrl=URL.createObjectURL(blob);const link=document.createElement('a');link.href=objectUrl;link.download=filename;document.body.append(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(objectUrl),1000);
+        message.className='message success';message.textContent=`Downloaded ${filename}. Open it in Roblox Studio.`;
       }catch(error){message.className='message error';message.textContent=error.message||'Request failed. Please try again.'}
       finally{button.disabled=false}
     });
