@@ -90,14 +90,22 @@
           let imageRouteRequested=false,imageRouteMarker=null;
           const originalFetch=window.fetch;
           window.fetch=async(input,init)=>{
-            const response=await originalFetch.call(window,input,init);
+            let requestInput=input,assetRequestUrl=null;
             try{
-              const requestUrl=new URL(typeof input==='string'?input:input.url,location.href);
+              const sourceUrl=new URL(typeof input==='string'?input:input.url,location.href);
+              if(sourceUrl.pathname.endsWith('/rbxasset')||sourceUrl.pathname==='/rbxasset'){
+                assetRequestUrl=new URL(sourceUrl.href);assetRequestUrl.pathname='/api/rawasset';
+                requestInput=input instanceof Request?new Request(assetRequestUrl.href,input):assetRequestUrl.href;
+              }
+            }catch{/* Let the original request proceed if it is not a URL. */}
+            const response=await originalFetch.call(window,requestInput,init);
+            try{
+              const requestUrl=assetRequestUrl||new URL(typeof input==='string'?input:input.url,location.href);
               const imageId=requestUrl.searchParams.get('id');
-              if(imageId&&(requestUrl.pathname.endsWith('/rbxasset')||requestUrl.pathname==='/rbxasset')){
+              if(imageId&&requestUrl.pathname==='/api/rawasset'){
                 imageRouteRequested=true;imageRouteMarker=response.headers.get('X-Threadline-Asset-Route');
               }
-              if(response.ok&&imageId&&(requestUrl.pathname.endsWith('/rbxasset')||requestUrl.pathname==='/rbxasset')){
+              if(response.ok&&imageId&&requestUrl.pathname==='/api/rawasset'){
                 const blob=await response.clone().blob();
                 const contentType=response.headers.get('Content-Type')||'';
                 const imageType=await imageMimeType(blob,contentType);
@@ -140,9 +148,9 @@
           if(format==='png'){
             if(!pngTextures.length){
               const detail=unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ');
-              const oldRoute=imageRouteRequested&&imageRouteMarker!=='raw-asset-v2';
+              const oldRoute=imageRouteRequested&&imageRouteMarker!=='raw-asset-v3';
               throw new Error(oldRoute
-                ?`No PNG was returned. The live texture route is outdated (missing X-Threadline-Asset-Route: raw-asset-v2). Deploy the current vercelWebpage directory. ${detail}`
+                ?`No PNG was returned. The raw asset route is outdated (missing X-Threadline-Asset-Route: raw-asset-v3). Deploy the current vercelWebpage directory. ${detail}`
                 :`No PNG image bytes were returned for this model.${detail?` Roblox reported: ${detail}.`:''}`);
             }
             downloadBlob(pngTextures[0].png,`${model.assetId}_threadline.png`);
