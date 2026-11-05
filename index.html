@@ -12,8 +12,8 @@
     :root{color-scheme:dark;--bg:#101114;--panel:#191a20;--line:#30313a;--muted:#a5a7b2;--text:#f5f5f7;--accent:#b8f34a;--red:#ff7a7a}
     *{box-sizing:border-box}body{margin:0;min-height:100vh;background:radial-gradient(ellipse at 50% 0,#22252c 0,transparent 50%),var(--bg);color:var(--text);font:16px/1.5 Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;display:grid;place-items:center;padding:28px}
     main{width:min(100%,650px)}.brand{font-size:13px;letter-spacing:.16em;text-transform:uppercase;color:var(--accent);font-weight:750;margin-bottom:24px}.card{padding:clamp(24px,6vw,48px);border:1px solid var(--line);background:color-mix(in srgb,var(--panel) 94%,transparent);border-radius:24px;box-shadow:0 24px 80px #0005}
-    h1{font-size:clamp(32px,6vw,46px);letter-spacing:-.045em;line-height:1.06;margin:0 0 14px}p{color:var(--muted);margin:0}.intro{max-width:490px;margin-bottom:30px}.label{display:block;font-weight:650;font-size:14px;margin-bottom:9px}form{display:grid;grid-template-columns:1fr;gap:10px}.input-wrap{min-width:0}input{width:100%;height:54px;background:#101115;border:1px solid #3a3b44;border-radius:12px;padding:0 16px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #b8f34a24}button{height:54px;padding:0 16px;border:0;border-radius:12px;background:var(--accent);color:#17190e;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{filter:brightness(1.06)}button:disabled{opacity:.55;cursor:wait}.hint{font-size:13px;margin-top:10px}.message{min-height:24px;margin-top:16px;font-size:14px;color:var(--muted)}.message.error{color:var(--red)}.message.success{color:var(--accent)}.divider{height:1px;background:var(--line);margin:27px 0 21px}.note{font-size:13px}.note strong{color:#dedfe4;font-weight:600}.footer{font-size:12px;text-align:center;margin-top:18px;color:#777985}
-    @media(max-width:520px){form{grid-template-columns:1fr}button{width:100%}}
+    h1{font-size:clamp(32px,6vw,46px);letter-spacing:-.045em;line-height:1.06;margin:0 0 14px}p{color:var(--muted);margin:0}.intro{max-width:490px;margin-bottom:30px}.label{display:block;font-weight:650;font-size:14px;margin-bottom:9px}form{display:grid;grid-template-columns:1fr;gap:10px}.input-wrap{min-width:0}.actions{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}input{width:100%;height:54px;background:#101115;border:1px solid #3a3b44;border-radius:12px;padding:0 16px;color:var(--text);font:inherit;outline:none}input:focus{border-color:var(--accent);box-shadow:0 0 0 3px #b8f34a24}button{height:54px;padding:0 16px;border:0;border-radius:12px;background:var(--accent);color:#17190e;font:inherit;font-weight:700;cursor:pointer;white-space:nowrap}button:hover{filter:brightness(1.06)}button:disabled{opacity:.55;cursor:wait}.hint{font-size:13px;margin-top:10px}.message{min-height:24px;margin-top:16px;font-size:14px;color:var(--muted)}.message.error{color:var(--red)}.message.success{color:var(--accent)}.divider{height:1px;background:var(--line);margin:27px 0 21px}.note{font-size:13px}.note strong{color:#dedfe4;font-weight:600}.footer{font-size:12px;text-align:center;margin-top:18px;color:#777985}
+    @media(max-width:520px){.actions{grid-template-columns:1fr}button{width:100%}}
   </style>
 </head>
 <body>
@@ -25,12 +25,16 @@
       <label class="label" for="asset">Asset ID or Roblox URL</label>
       <form id="form">
         <div class="input-wrap"><input id="asset" name="asset" autocomplete="url" placeholder="e.g. 96376283814304" required></div>
-        <button id="convert-model" type="submit">Download Blender model + texture ZIP</button>
+        <div class="actions">
+          <button type="submit" data-format="glb">Download GLB</button>
+          <button type="submit" data-format="png">Download PNG</button>
+          <button type="submit" data-format="zip">Download ZIP</button>
+        </div>
       </form>
       <p class="hint">Supports Roblox catalog, create/store, and asset links. Conversion runs in your browser.</p>
       <div class="message" id="message" role="status" aria-live="polite"></div>
       <div class="divider"></div>
-      <p class="note"><strong>ZIP contents:</strong> <code>ASSETID_threadline.glb</code> and any retrieved texture PNGs. GLB stores the model, UV coordinates, materials, and available textures in a Blender-importable file; PNG copies are included separately when available.</p>
+      <p class="note"><strong>Downloads:</strong> Choose the GLB model, a PNG texture, or a ZIP containing both. GLB stores the model, UV coordinates, materials, and available embedded textures in a Blender-importable file.</p>
     </section>
     <p class="footer">Downloads are requested from Roblox Asset Delivery.</p>
   </main>
@@ -66,7 +70,7 @@
       const assetId=filename.replace(/\.(rbxm|rbxmx)$/i,'');return {blob,assetId,filename};
     }
     form.addEventListener('submit',async event=>{
-      event.preventDefault();message.className='message';message.textContent='Downloading model and retrieving its mesh and texture…';buttons.forEach(button=>button.disabled=true);
+      event.preventDefault();const format=event.submitter?.dataset.format||'zip';message.className='message';message.textContent='Downloading model and retrieving its mesh and texture…';buttons.forEach(button=>button.disabled=true);
       try{
         const model=await fetchModel();
         {
@@ -83,12 +87,16 @@
           // This preserves the original texture even if the model parser cannot
           // attach it to a material for GLB export.
           const downloadedImages=new Map();
+          let imageRouteRequested=false,imageRouteMarker=null;
           const originalFetch=window.fetch;
           window.fetch=async(input,init)=>{
             const response=await originalFetch.call(window,input,init);
             try{
               const requestUrl=new URL(typeof input==='string'?input:input.url,location.href);
               const imageId=requestUrl.searchParams.get('id');
+              if(imageId&&(requestUrl.pathname.endsWith('/rbxasset')||requestUrl.pathname==='/rbxasset')){
+                imageRouteRequested=true;imageRouteMarker=response.headers.get('X-Threadline-Asset-Route');
+              }
               if(response.ok&&imageId&&(requestUrl.pathname.endsWith('/rbxasset')||requestUrl.pathname==='/rbxasset')){
                 const blob=await response.clone().blob();
                 const contentType=response.headers.get('Content-Type')||'';
@@ -101,11 +109,11 @@
           let built;
           try{built=await buildRoblox(parsed,color=>new THREE.MeshStandardMaterial({color}));}
           finally{window.fetch=originalFetch}
-          if(built.unions||built.platzhalter||built.offen.length){
+          const unavailable=fehlendeAssets();
+          if(format!=='png'&&(built.unions||built.platzhalter||built.offen.length)){
             throw new Error(`Could not convert every part. ${built.offen.length?`Unavailable mesh IDs: ${built.offen.join(', ')}. `:''}${built.unions?'This model includes Roblox union geometry, which cannot be exported.':''}`);
           }
-          if(!built.group.children.length)throw new Error('No supported 3D geometry was found in this model.');
-          const unavailable=fehlendeAssets();
+          if(format!=='png'&&!built.group.children.length)throw new Error('No supported 3D geometry was found in this model.');
           built.group.updateMatrixWorld(true);
           const textures=new Map();
           built.group.traverse(object=>{
@@ -115,10 +123,7 @@
               if(image)textures.set(material.map.uuid,{image,width:image.naturalWidth||image.videoWidth||image.width,height:image.naturalHeight||image.videoHeight||image.height});
             }
           });
-          const glb=await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
-          const zip=new JSZip();
-          zip.file(`${model.assetId}_threadline.glb`,glb);
-          let textureIndex=0;
+          const glb=format==='png'?null:await new GLTFExporter().parseAsync(built.group,{binary:true,onlyVisible:false});
           const pngTextures=[];
           if(downloadedImages.size){
             for(const [id,{blob}] of downloadedImages)pngTextures.push({id,png:await imageBlobToPng(blob)});
@@ -131,10 +136,37 @@
               pngTextures.push({id:null,png});
             }
           }
-          for(const {png} of pngTextures){
-            textureIndex++;
-            const textureName=pngTextures.length===1?`${model.assetId}_threadline.png`:`${model.assetId}_threadline_texture_${textureIndex}.png`;
-            zip.file(textureName,png);
+
+          if(format==='png'){
+            if(!pngTextures.length){
+              const detail=unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ');
+              const oldRoute=imageRouteRequested&&imageRouteMarker!=='image-ref-v1';
+              throw new Error(oldRoute
+                ?`No PNG was returned. The live texture route is outdated (missing X-Threadline-Asset-Route: image-ref-v1). Deploy the current vercelWebpage directory. ${detail}`
+                :`No PNG image bytes were returned for this model.${detail?` Roblox reported: ${detail}.`:''}`);
+            }
+            downloadBlob(pngTextures[0].png,`${model.assetId}_threadline.png`);
+            message.className=unavailable.length?'message error':'message success';
+            message.textContent=unavailable.length
+              ?`Downloaded ${model.assetId}_threadline.png. Other referenced assets could not be retrieved: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}.`
+              :`Downloaded ${model.assetId}_threadline.png.${pngTextures.length>1?` This is texture 1 of ${pngTextures.length}.`:''}`;
+            return;
+          }
+
+          if(format==='glb'){
+            downloadBlob(new Blob([glb],{type:'model/gltf-binary'}),`${model.assetId}_threadline.glb`);
+            message.className=unavailable.length?'message error':'message success';
+            message.textContent=unavailable.length
+              ?`Downloaded ${model.assetId}_threadline.glb. Some referenced assets could not be retrieved: ${unavailable.map(item=>`${item.id}${item.grund?` (${item.grund})`:''}`).join('; ')}.`
+              :`Downloaded ${model.assetId}_threadline.glb with UV coordinates${textures.size?' and embedded textures.':'.'}`;
+            return;
+          }
+
+          const zip=new JSZip();
+          zip.file(`${model.assetId}_threadline.glb`,glb);
+          for(let index=0;index<pngTextures.length;index++){
+            const textureName=pngTextures.length===1?`${model.assetId}_threadline.png`:`${model.assetId}_threadline_texture_${index+1}.png`;
+            zip.file(textureName,pngTextures[index].png);
           }
           const archive=await zip.generateAsync({type:'blob',compression:'DEFLATE',compressionOptions:{level:6}});
           downloadBlob(archive,`${model.assetId}_threadline.zip`);
